@@ -4,6 +4,9 @@ from pydantic import BaseModel
 
 from langchain_core.messages import SystemMessage, BaseMessage, HumanMessage, AIMessage
 
+from langsmith import Client
+from langsmith import traceable
+
 
 class AgentState(BaseModel):
     """State of the agent."""
@@ -15,15 +18,12 @@ class Category(BaseModel):
     """Category for the agent."""
     category: str
     
+@traceable(run_type="tool")
 def create_llm_msg(system_prompt,history):
     resp=[SystemMessage(content=system_prompt)]
     msgs = history
     for m in msgs:
-        if m["role"] == "user":
-            resp.append(HumanMessage(content=m["content"]))
-        elif m["role"] == "assistant":
-            resp.append(AIMessage(content=m["content"]))
-    #print(f"DEBUG CREATE LLM MSGS: {history=}\n{resp=}")
+        resp.append(m)
     return resp
     
     
@@ -34,20 +34,19 @@ class ChatbotAgent():
         self.model = ChatOpenAI(model_name="gpt-5-nano", openai_api_key=api_key)
         workflow = StateGraph(AgentState)
         workflow.add_node("classifier", self.classifier)
-        workflow.add_node("smalltalk_agent", self.smalltalk_agent)
-        workflow.add_node("complaint_agent", self.complaint_agent)
-        workflow.add_node("status_agent", self.status_agent)
-        workflow.add_node("feedback_agent", self.feedback_agent)
+        workflow.add_node("smalltalk", self.smalltalk_agent)
+        workflow.add_node("analyze_soil_report", self.complaint_agent)
+        workflow.add_node("identify_plant_disease", self.status_agent)
+        workflow.add_node("provide_gardening_tips", self.status_agent)
+        workflow.add_node("feedback", self.feedback_agent)
+        
         workflow.add_edge(START, "classifier")
         workflow.add_conditional_edges("classifier", self.main_router)
-        #workflow.add_edge("classifier", "smalltalk_agent")
-        #workflow.add_edge("classifier", "complaint_agent")
-        #workflow.add_edge("classifier", "status_agent")
-        #workflow.add_edge("classifier", "feedback_agent")
-        workflow.add_edge("smalltalk_agent", END)
-        workflow.add_edge("complaint_agent", END)
-        workflow.add_edge("status_agent", END)
-        workflow.add_edge("feedback_agent", END)
+        workflow.add_edge("smalltalk", END)
+        workflow.add_edge("analyze_soil_report", END)
+        workflow.add_edge("identify_plant_disease", END)
+        workflow.add_edge("provide_gardening_tips", END)
+        workflow.add_edge("feedback", END)
 
         self.graph = workflow.compile()
 
@@ -59,12 +58,13 @@ class ChatbotAgent():
         CLASSIFIER_PROMPT = """
         You are a helpful assistant that classifies user messages into categories.
         Given the following messages, classify them into one of the following categories:
-        - smalltalk_agent
-        - complaint_agent
-        - status_agent
-        - feedback_agent
+        - smalltalk
+        - analyze_soil_report
+        - identify_plant_disease
+        - provide_gardening_tips
+        - feedback
 
-        If you don't know the category, classify it as "smalltalk_agent".
+        If you don't know the category, classify it as "smalltalk".
         """
         llm_messages = create_llm_msg(CLASSIFIER_PROMPT, state.messages)
         llm_response = self.model.with_structured_output(Category).invoke(llm_messages)

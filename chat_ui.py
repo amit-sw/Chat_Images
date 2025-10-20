@@ -4,6 +4,10 @@ from langchain_core.messages import SystemMessage, BaseMessage, HumanMessage, AI
 from langsmith import Client
 from langchain_core.callbacks import BaseCallbackHandler
 
+from langchain_openai import ChatOpenAI
+
+import base64
+
 from graph import ChatbotAgent
 
 import random
@@ -98,6 +102,17 @@ def config_for_langgraph():
     }
     return thread_id, config, run_recorder
 
+def process_file_upload(uploaded_file):
+    mime = uploaded_file.type or "image/png"
+    b64 = base64.b64encode(uploaded_file.getvalue()).decode("utf-8")
+    data_url = f"data:{mime};base64,{b64}"
+
+    response = {
+        'type': 'image_url',
+        'image_url': {'url':data_url}
+    }
+    return response
+
 def start_chat():
     st.markdown("""
     <style>
@@ -150,12 +165,7 @@ def start_chat():
                 st.markdown(display_text)
                 #st.markdown(message["content"].replace("$", "\\$")) 
     
-    if prompt := st.chat_input("Ask me anything .", accept_file=True, file_type=["pdf", "md", "doc", "csv","jpg","png"]):
-        if prompt and prompt["files"]:
-            uploaded_file=prompt["files"][0]
-            file_contents, filetype = "XXX XXX XXX TO-DO", "csv"
-            if filetype != 'csv':
-                prompt.text = prompt.text + f"\n Here are the file contents: {file_contents}"
+    if prompt := st.chat_input("Ask me anything .", accept_file=True, file_type=["gif","jpg","png"]):
         
         user_prompt = prompt.text
         st.session_state.messages.append({"role": "user", "content": user_prompt})
@@ -166,34 +176,39 @@ def start_chat():
         message_history = []
         msgs = st.session_state.messages
     
-    # Iterate through chat history, and based on the role (user or assistant) tag it as HumanMessage or AIMessage
+        # Iterate through chat history, and based on the role (user or assistant) tag it as HumanMessage or AIMessage
         for m in msgs:
             if m["role"] == "user":
                 message_history.append(HumanMessage(content=m["content"]))
             elif m["role"] == "assistant":
                 message_history.append(AIMessage(content=m["content"]))
         
+        if prompt and prompt["files"]:
+            uploaded_file=prompt["files"][0]
+            basic_message_list=[]
+            if user_prompt:
+                basic_message_list.append({"type": "text", "text": user_prompt})
+            img_object= process_file_upload(uploaded_file)
+            basic_message_list.append(img_object)
+            message_history.append(HumanMessage(content=basic_message_list))
+            st.image(uploaded_file)
+        elif user_prompt:
+            message_history.append(HumanMessage(content=user_prompt))
+            
+        st.session_state.messages.append({"role": "user", "content": user_prompt})
+        #my_model = ChatOpenAI(model_name="gpt-5-nano", openai_api_key=st.secrets['OPENAI_API_KEY'])
+        #llm_response = my_model.invoke(message_history)
+        #print(f"LLM Response: {llm_response}")
+        #with st.sidebar.expander("LLM response"):
+        #    st.write(f"LLM Response: {llm_response}")
+        
         app = ChatbotAgent(st.secrets['OPENAI_API_KEY'])
         thread_id, config, run_recorder = config_for_langgraph()
         
-        parameters = {'initialMessage': prompt.text, 
-                      #'sessionState': st.session_state, 
-                        #'sessionHistory': st.session_state.messages, 
-                        'message_history': message_history}
-        
-        if 'csv_data' in st.session_state:
-            parameters['csv_data'] = st.session_state['csv_data']
-        
-        if prompt['files'] and filetype == 'csv':
-            parameters['csv_data'] = file_contents
-            st.session_state['csv_data'] = file_contents
+        parameters = {'messages': message_history}
 
         with st.spinner("Thinking ...", show_time=True):
             full_response = ""
-            
-
-
-
 
             for s in app.graph.stream(parameters, config):
                 if run_recorder.root_run_id and st.session_state.get("last_langsmith_run_id") != run_recorder.root_run_id:
